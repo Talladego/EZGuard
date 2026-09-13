@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.22
+local VERSION = 1.23
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -279,16 +279,21 @@ end
 
 local function getOwnPartyTargetEvents()
 	local ownPartyTargetEvents = {}
+	local selfName = fixString(LOCAL_PLAYER_NAME)
 
 	if IsWarBandActive and IsWarBandActive() then
-		local playerName = fixString(LOCAL_PLAYER_NAME)
-		local partyIndex = PartyUtils.IsPlayerInWarband(playerName)
+		local partyIndex = PartyUtils.IsPlayerInWarband(selfName)
 		local warbandParty = partyIndex and PartyUtils.GetWarbandParty(partyIndex)
 		local partyData = (warbandParty and warbandParty.players) or {}
 		for index, member in ipairs(partyData) do
 			local memberName = fixString(member and member.name)
-			if memberName and memberName ~= L"" and PartyTargetEvent[index] then
-				ownPartyTargetEvents[memberName] = PartyTargetEvent[index]
+			if memberName and memberName ~= L"" then
+				if memberName == selfName then
+					ownPartyTargetEvents[memberName] = SystemData.Events.TARGET_SELF
+				elseif PartyTargetEvent[index] then
+					-- Warband party slots include self; TARGET_GROUP_MEMBER_n maps to slot index (WarTriage parity).
+					ownPartyTargetEvents[memberName] = PartyTargetEvent[index]
+				end
 			end
 		end
 	else
@@ -428,6 +433,7 @@ EZGuard.RefreshState = {
 EZGuard.AutoTargetState = {
 	pendingName = L"",
 	pendingIndex = 0,
+	lastBroadcastName = L"",
 	nextAllowedTime = 0,
 }
 EZGuard.GuardButtonState = {
@@ -472,6 +478,7 @@ local function resetRuntimeState()
 	EZGuard.NewGuardTarget.partyIndex = 0
 	EZGuard.AutoTargetState.pendingName = L""
 	EZGuard.AutoTargetState.pendingIndex = 0
+	EZGuard.AutoTargetState.lastBroadcastName = L""
 	EZGuard.AutoTargetState.nextAllowedTime = 0
 	EZGuard.GuardButtonState.glowLevel = 0
 	markAllDirty()
@@ -480,6 +487,7 @@ local function resetRuntimeState()
 end
 
 function EZGuard.Initialize()
+	LOCAL_PLAYER_NAME = GameData.Player.name
 	EZGuard.Settings = initializeSettings(EZGuard.Settings)
 	isTank = checkIsTank()
 	registerSlashCommands()
@@ -543,6 +551,7 @@ function EZGuard.RegisterEventHandlers(enabled)
 end
 
 function EZGuard.LOADING_END()
+	LOCAL_PLAYER_NAME = GameData.Player.name
 	isTank = checkIsTank()
 	registerSlashCommands()
 	if isTank then
@@ -584,6 +593,10 @@ function EZGuard.PLAYER_TARGET_EFFECTS_UPDATED()
 end
 
 function EZGuard.GROUP_UPDATED()
+	markPlayersDirty()
+end
+
+function EZGuard.GROUP_STATUS_UPDATED()
 	markPlayersDirty()
 end
 
@@ -761,6 +774,18 @@ function EZGuard.AutoTarget()
 		or EZGuard.NewGuardTarget.name == L""
 		or EZGuard.NewGuardTarget.name == EZGuard.CurrentGuardTarget.name
 	then
+		if EZGuard.NewGuardTarget.name == L""
+			or EZGuard.NewGuardTarget.name == EZGuard.CurrentGuardTarget.name
+		then
+			EZGuard.AutoTargetState.lastBroadcastName = L""
+			EZGuard.AutoTargetState.pendingName = L""
+			EZGuard.AutoTargetState.pendingIndex = 0
+		end
+		return
+	end
+
+	-- Broadcast once per suggested ally; click-to-guard still calls TryAutoTarget directly.
+	if EZGuard.AutoTargetState.lastBroadcastName == EZGuard.NewGuardTarget.name then
 		return
 	end
 
@@ -773,13 +798,8 @@ function EZGuard.TryAutoTarget(player)
 		return
 	end
 
-	if EZGuard.AutoTargetState.pendingName == player.name
-		and currentTime < EZGuard.AutoTargetState.nextAllowedTime
-	then
-		return
-	end
-
 	BroadcastEvent(targetEvent)
+	EZGuard.AutoTargetState.lastBroadcastName = player.name
 	EZGuard.AutoTargetState.pendingName = player.name
 	EZGuard.AutoTargetState.pendingIndex = player.partyIndex or player.index or 0
 	EZGuard.AutoTargetState.nextAllowedTime = currentTime + PARTY_AUTO_TARGET_THROTTLE
@@ -812,7 +832,14 @@ end
 
 function EZGuard.IsGuardingTarget(targetType)
 	local buffs = GetBuffs(targetType)
+	if type(buffs) ~= "table" then
+		return false
+	end
+
 	local guardAbilityId = GuardAbilityID[GameData.Player.career.line]
+	if not guardAbilityId then
+		return false
+	end
 
 	for _, v in pairs(buffs) do
 		if v.abilityId == guardAbilityId and v.castByPlayer then

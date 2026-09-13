@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ModuleFile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-	<UiMod name="EZGuard" version="1.22" date="22/08/2026" >
+	<UiMod name="EZGuard" version="1.23" date="13/09/2026" >
 		<Author name="Talladego" email="" />
 		<Description text="EZGuard" />
 		<VersionSettings gameVersion="1.4.8" windowsVersion="1.0" savedVariablesVersion="1.0" />

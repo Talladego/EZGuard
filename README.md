@@ -18,6 +18,13 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.23
+
+- Nil-safe `GetBuffs` in guard-buff detection
+- Auto-target broadcasts once per suggested ally (no tick spam)
+- Warband self maps to `TARGET_SELF`; slot events match WarTriage
+- `GROUP_STATUS_UPDATED` handler (was registered but missing)
+
 ## Version 1.22
 
 - Map distance scan early-out (WarTriage 3.01 pattern)

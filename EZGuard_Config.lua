@@ -6,26 +6,23 @@ local GUI
 
 function EZGuard_Config.Slash(input)
 	if (not GUI) then
-		-- parameters: title text, settings table, callback-function
-		-- note that you need to have a settings table!
 		GUI = LibConfig("EZGuard v" .. tostring(EZGuard.Settings.version), EZGuard.Settings, true, EZGuard_Config.SettingsChanged)
 
 		GUI:AddTab("Info")
 		local infoText
-		infoText = GUI("label", "EZGuard makes your guard ability select a group member and set guard to it when clicked. It will only select alive players withing guard range (default 50ft).")
+		infoText = GUI("label", "EZGuard makes your guard ability select a group member and set guard to it when clicked. It will only select alive players within guard range (default 50ft).")
 		infoText.label:Font("font_default_text_small")
 		infoText.label:Align("left")
 
-		infoText = GUI("label", "When EZGuard is enabled your guard ability will have a active check mark. Ctrl-Clicking your guard ability toggles EZGuard on and off.")
+		infoText = GUI("label", "When EZGuard is enabled your guard ability will have an active check mark. Ctrl-clicking your guard ability toggles EZGuard on and off.")
 		infoText.label:Font("font_default_text_small")
 		infoText.label:Align("left")
 
-
-		infoText = GUI("label", "When \"Auto Target\" is enabled targets will be selected automatically. You then manually have to click your guard ability.")
+		infoText = GUI("label", "When Auto Target is enabled, party members are selected automatically. You then manually click your guard ability.")
 		infoText.label:Font("font_default_text_small")
 		infoText.label:Align("left")
 
-		infoText = GUI("label", "Enabling \"Burn Effect\" will make our guard ability burn when a group member in range needs guard.")
+		infoText = GUI("label", "Enabling Burn Effect makes your guard ability glow when a group member in range needs guard.")
 		infoText.label:Font("font_default_text_small")
 		infoText.label:Align("left")
 
@@ -40,6 +37,9 @@ function EZGuard_Config.Slash(input)
 		checkbox = GUI("checkbox", "Burn Effect", "burnEffects")
 		checkbox.label:Font("font_default_text_small")
 
+		checkbox = GUI("checkbox", "Range Check (map distance)", "rangeCheck")
+		checkbox.label:Font("font_default_text_small")
+
 		local textbox
 		textbox = GUI("textbox", "Guard Distance:", "guardDistance")
 		textbox.label:Font("font_default_text_small")
@@ -49,12 +49,10 @@ function EZGuard_Config.Slash(input)
 		textbox.edit:Resize(50)
 
 		GUI:AddTab("Hitpoints Factors")
-		local infoText
-		infoText = GUI("label", "Sets the hitpoints factor when selecting player to guard. Lower factor will be targeted before higher. Only used when \"HURT\" guard mode is selected")
+		infoText = GUI("label", "Sets the hitpoints factor when selecting a player to guard. Lower factor is targeted before higher.")
 		infoText.label:Font("font_default_text_small")
 		infoText.label:Align("left")
 
-		local textbox
 		textbox = GUI("textbox", "Healers Hitpoints factor:", "healerWeight")
 		textbox.label:Font("font_default_text_small")
 		textbox.label:AnchorTo(textbox, "left", "left", 48, -5)
@@ -68,20 +66,28 @@ function EZGuard_Config.Slash(input)
 		textbox.label:Align("left")
 		textbox.edit:AnchorTo(textbox.label, "right", "right", -48)
 		textbox.edit:Resize(50)
-		
+
 		textbox = GUI("textbox", "Tanks Hitpoints factor:", "tankWeight")
 		textbox.label:Font("font_default_text_small")
 		textbox.label:AnchorTo(textbox, "left", "left", 48, -5)
 		textbox.label:Align("left")
 		textbox.edit:AnchorTo(textbox.label, "right", "right", -48)
 		textbox.edit:Resize(50)
-
 	end
 	GUI:Show()
 end
 
 function EZGuard_Config.SettingsChanged()
 	GUI:Hide()
+	EZGuard.Settings = EZGuard.Settings or {}
+	if EZGuard.RefreshState then
+		EZGuard.RefreshState.playersDirty = true
+		EZGuard.RefreshState.transientDirty = true
+		EZGuard.RefreshState.targetDirty = true
+		EZGuard.RefreshState.nextPlayersSnapshotTime = 0
+		EZGuard.RefreshState.nextTransientRefreshTime = 0
+		EZGuard.RefreshState.nextTargetRefreshTime = 0
+	end
 	if EZGuard.Settings.enabled then
 		EZGuard.Enable()
 	else

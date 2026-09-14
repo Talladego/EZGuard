@@ -18,6 +18,13 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.24
+
+- Settings UI Enable/Disable always syncs event handlers (`ApplyEnabledState`)
+- Scenario snapshot passes career line id (Hitpoints Factors work again)
+- Clear stale `NewGuardTarget` when leaving group
+- Normalize numeric settings on SettingsChanged
+
 ## Version 1.23
 
 - Nil-safe `GetBuffs` in guard-buff detection

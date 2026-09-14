@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.23
+local VERSION = 1.24
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -214,6 +214,7 @@ local function migrateSettings(settings)
 end
 
 local function normalizeSettings(settings)
+	settings = settings or {}
 	settings.guardDistance = clampPositiveNumber(settings.guardDistance, 50)
 	settings.healerWeight = clampPositiveNumber(settings.healerWeight, 100)
 	settings.dpsWeight = clampPositiveNumber(settings.dpsWeight, 125)
@@ -405,6 +406,10 @@ end
 ----------------------------------------------------------------
 
 EZGuard = EZGuard or {}
+
+function EZGuard.NormalizeSettings(settings)
+	return normalizeSettings(settings or EZGuard.Settings)
+end
 
 EZGuard.DefaultSettings = {
 	version = VERSION,
@@ -643,6 +648,8 @@ function EZGuard.OnUpdate(elapsed)
 
 	if GetNumGroupmates() > 0 then
 		EZGuard.SelectHurtPlayer()
+	else
+		EZGuard.ClearNewGuardTarget()
 	end
 
 	EZGuard.UpdateButtonGlow()
@@ -717,28 +724,52 @@ function EZGuard.ToggleEnabled()
 	end
 end
 
-function EZGuard.Enable()
-	if EZGuard.Settings.enabled then
-		EZGuard.RefreshGuardButtonAppearance()
-		return
+-- Sync handlers/appearance from the current Settings.enabled flag.
+-- Used by LibConfig after it mutates Settings (Enable/Disable early-return would skip).
+function EZGuard.ApplyEnabledState()
+	local enabled = EZGuard.Settings and EZGuard.Settings.enabled
+	EZGuard.RegisterEventHandlers(enabled)
+	if enabled then
+		markAllDirty()
 	end
-
-	EZGuard.Settings.enabled = true
-	EZGuard.RegisterEventHandlers(true)
-	markAllDirty()
 	EZGuard.RefreshGuardButtonAppearance()
-	EZGuard.Print(L"--- <icon57> Enabled")
+end
+
+function EZGuard.Enable()
+	local wasEnabled = EZGuard.Settings.enabled
+	EZGuard.Settings.enabled = true
+	EZGuard.ApplyEnabledState()
+	if not wasEnabled then
+		EZGuard.Print(L"--- <icon57> Enabled")
+	end
 end
 
 function EZGuard.Disable()
-	if not EZGuard.Settings.enabled then
-		EZGuard.RefreshGuardButtonAppearance()
+	local wasEnabled = EZGuard.Settings.enabled
+	EZGuard.Settings.enabled = false
+	EZGuard.ApplyEnabledState()
+	if wasEnabled then
+		EZGuard.Print(L"--- <icon58> Disabled")
+	end
+end
+
+function EZGuard.ClearNewGuardTarget()
+	if EZGuard.NewGuardTarget.name == L""
+		and EZGuard.NewGuardTarget.index == 0
+		and EZGuard.NewGuardTarget.targetEvent == nil
+		and EZGuard.AutoTargetState.lastBroadcastName == L""
+	then
 		return
 	end
 
-	EZGuard.Settings.enabled = false
-	EZGuard.RegisterEventHandlers(false)
-	EZGuard.Print(L"--- <icon58> Disabled")
+	EZGuard.NewGuardTarget.index = 0
+	EZGuard.NewGuardTarget.name = L""
+	EZGuard.NewGuardTarget.healthPercent = 0
+	EZGuard.NewGuardTarget.distance = 999999
+	EZGuard.NewGuardTarget.weight = 1000
+	EZGuard.NewGuardTarget.targetEvent = nil
+	EZGuard.NewGuardTarget.partyIndex = 0
+	EZGuard.AutoTargetState.lastBroadcastName = L""
 end
 
 function EZGuard.UpdateButtonGlow()
@@ -871,12 +902,13 @@ function EZGuard.BuildFriendlyPlayersSnapshot()
 	if (GameData.Player.isInScenario or GameData.Player.isInSiege) and GameData.GetScenarioPlayerGroups then
 		local scenarioPlayers = GameData.GetScenarioPlayerGroups() or {}
 		for _, playerData in ipairs(scenarioPlayers) do
+			local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or nil
 			pushPlayer(
 				playersByName,
 				ownPartyTargetEvents,
 				playerData.name,
 				playerData.health,
-				ArcheType[CareerIDsToLines[playerData.careerId]],
+				careerLine,
 				nil
 			)
 		end

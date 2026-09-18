@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.24
+local VERSION = 1.25
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -280,6 +280,7 @@ end
 
 local function getOwnPartyTargetEvents()
 	local ownPartyTargetEvents = {}
+	local ownPartySlotByName = {}
 	local selfName = fixString(LOCAL_PLAYER_NAME)
 
 	if IsWarBandActive and IsWarBandActive() then
@@ -289,6 +290,7 @@ local function getOwnPartyTargetEvents()
 		for index, member in ipairs(partyData) do
 			local memberName = fixString(member and member.name)
 			if memberName and memberName ~= L"" then
+				ownPartySlotByName[memberName] = index
 				if memberName == selfName then
 					ownPartyTargetEvents[memberName] = SystemData.Events.TARGET_SELF
 				elseif PartyTargetEvent[index] then
@@ -301,13 +303,16 @@ local function getOwnPartyTargetEvents()
 		local partyData = PartyUtils.GetPartyData and PartyUtils.GetPartyData() or {}
 		for index, member in ipairs(partyData) do
 			local memberName = fixString(member and member.name)
-			if memberName and memberName ~= L"" and PartyTargetEvent[index] then
-				ownPartyTargetEvents[memberName] = PartyTargetEvent[index]
+			if memberName and memberName ~= L"" then
+				ownPartySlotByName[memberName] = index
+				if PartyTargetEvent[index] then
+					ownPartyTargetEvents[memberName] = PartyTargetEvent[index]
+				end
 			end
 		end
 	end
 
-	return ownPartyTargetEvents
+	return ownPartyTargetEvents, ownPartySlotByName
 end
 
 local function pushPlayer(playersByName, ownPartyTargetEvents, name, health, careerLine, partyIndex)
@@ -774,8 +779,8 @@ end
 
 function EZGuard.UpdateButtonGlow()
 	local shouldGlow = EZGuard.Settings.burnEffects
-		and EZGuard.NewGuardTarget.index ~= 0
 		and EZGuard.NewGuardTarget.name ~= L""
+		and resolveTargetEvent(EZGuard.NewGuardTarget)
 		and EZGuard.NewGuardTarget.name ~= EZGuard.CurrentGuardTarget.name
 
 	local glowLevel = shouldGlow and 2 or 0
@@ -801,8 +806,8 @@ end
 
 function EZGuard.AutoTarget()
 	if not EZGuard.Settings.autoTarget
-		or EZGuard.NewGuardTarget.index == 0
 		or EZGuard.NewGuardTarget.name == L""
+		or not resolveTargetEvent(EZGuard.NewGuardTarget)
 		or EZGuard.NewGuardTarget.name == EZGuard.CurrentGuardTarget.name
 	then
 		if EZGuard.NewGuardTarget.name == L""
@@ -894,7 +899,7 @@ end
 function EZGuard.BuildFriendlyPlayersSnapshot()
 	local playersByName = {}
 	local players = {}
-	local ownPartyTargetEvents = getOwnPartyTargetEvents()
+	local ownPartyTargetEvents, ownPartySlotByName = getOwnPartyTargetEvents()
 
 	EZGuard.OwnPartyTargetEvents = ownPartyTargetEvents
 	EZGuard.Player.name = fixString(LOCAL_PLAYER_NAME)
@@ -903,13 +908,15 @@ function EZGuard.BuildFriendlyPlayersSnapshot()
 		local scenarioPlayers = GameData.GetScenarioPlayerGroups() or {}
 		for _, playerData in ipairs(scenarioPlayers) do
 			local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or nil
+			local playerName = fixString(playerData.name)
+			local partyIndex = ownPartySlotByName[playerName]
 			pushPlayer(
 				playersByName,
 				ownPartyTargetEvents,
 				playerData.name,
 				playerData.health,
 				careerLine,
-				nil
+				partyIndex
 			)
 		end
 	elseif IsWarBandActive and IsWarBandActive() then

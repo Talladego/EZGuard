@@ -18,6 +18,11 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.25
+
+- Scenario/siege: map own-party slot into `pushPlayer` so `NewGuardTarget.index` is set when possible
+- Burn Effect / Auto Target gate on resolvable name (`resolveTargetEvent`), not `index ~= 0` (#16)
+
 ## Version 1.24
 
 - Settings UI Enable/Disable always syncs event handlers (`ApplyEnabledState`)

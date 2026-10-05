@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.25
+local VERSION = 1.26
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -31,10 +31,13 @@ local actionButtonHooksInstalled = false
 local slashCommandsRegistered = false
 
 local mathFloor = math.floor
-local mathMax = math.max
-local tableSort = table.sort
 local pairs = pairs
 local ipairs = ipairs
+
+local refreshFriendlyTargetState
+local refreshGuardTargetState
+local installActionButtonHooks
+local uninstallActionButtonHooks
 
 local MapPointTypeFilter = {
 	[SystemData.MapPips.PLAYER] = true,
@@ -228,6 +231,21 @@ local function initializeSettings(currentSettings)
 	return normalizeSettings(settings)
 end
 
+local function getGuardAbilityId()
+	local career = GameData.Player and GameData.Player.career or {}
+	return GuardAbilityID[career.line]
+end
+
+local function getLocalPlayerHealthPercent()
+	local hitPoints = GameData.Player and GameData.Player.hitPoints or {}
+	local current = tonumber(hitPoints.current) or 0
+	local maximum = tonumber(hitPoints.maximum) or 0
+	if maximum <= 0 then
+		return 100
+	end
+	return clampHealthPercent(mathFloor(100 * current / maximum))
+end
+
 local function checkIsTank()
 	local career = GameData.Player and GameData.Player.career or {}
 	local careerLine = career.line or CareerIDsToLines[career.id]
@@ -253,18 +271,6 @@ local function markAllDirty()
 	EZGuard.RefreshState.nextPlayersSnapshotTime = 0
 	EZGuard.RefreshState.nextTransientRefreshTime = 0
 	EZGuard.RefreshState.nextTargetRefreshTime = 0
-end
-
-local function sortTrackedPlayers(players)
-	local sortFunc = function(k1, k2)
-		if k1.health < k2.health then
-			return true
-		elseif k1.health == k2.health and k1.distance < k2.distance then
-			return true
-		end
-		return false
-	end
-	tableSort(players, sortFunc)
 end
 
 local function getArchetypeWeight(careerLine)
@@ -428,7 +434,6 @@ EZGuard.DefaultSettings = {
 	rangeCheck = true,
 }
 
-EZGuard.Player = {}
 EZGuard.Party = {}
 EZGuard.PlayerDistances = {}
 EZGuard.OwnPartyTargetEvents = {}
@@ -442,7 +447,6 @@ EZGuard.RefreshState = {
 }
 EZGuard.AutoTargetState = {
 	pendingName = L"",
-	pendingIndex = 0,
 	lastBroadcastName = L"",
 	nextAllowedTime = 0,
 }
@@ -487,7 +491,6 @@ local function resetRuntimeState()
 	EZGuard.NewGuardTarget.targetEvent = nil
 	EZGuard.NewGuardTarget.partyIndex = 0
 	EZGuard.AutoTargetState.pendingName = L""
-	EZGuard.AutoTargetState.pendingIndex = 0
 	EZGuard.AutoTargetState.lastBroadcastName = L""
 	EZGuard.AutoTargetState.nextAllowedTime = 0
 	EZGuard.GuardButtonState.glowLevel = 0
@@ -497,9 +500,7 @@ local function resetRuntimeState()
 end
 
 function EZGuard.Initialize()
-	LOCAL_PLAYER_NAME = GameData.Player.name
 	EZGuard.Settings = initializeSettings(EZGuard.Settings)
-	isTank = checkIsTank()
 	registerSlashCommands()
 
 	if not loadingEndEventRegistered then
@@ -507,14 +508,8 @@ function EZGuard.Initialize()
 		loadingEndEventRegistered = true
 	end
 
-	if isTank then
-		EZGuard.RegisterEventHandlers(EZGuard.Settings.enabled)
-		if isAddonActive() then
-			markAllDirty()
-		else
-			resetRuntimeState()
-		end
-	end
+	-- Apply tank/hooks/events immediately; LOADING_END repeats this after zoning.
+	EZGuard.LOADING_END()
 end
 
 function EZGuard.OnShutdown()
@@ -584,7 +579,6 @@ function EZGuard.PLAYER_TARGET_UPDATED()
 	refreshFriendlyTargetState()
 	if EZGuard.CurrentFriendlyTarget.name == EZGuard.AutoTargetState.pendingName then
 		EZGuard.AutoTargetState.pendingName = L""
-		EZGuard.AutoTargetState.pendingIndex = 0
 		EZGuard.AutoTargetState.nextAllowedTime = 0
 	end
 	markTargetDirty()
@@ -651,18 +645,14 @@ function EZGuard.OnUpdate(elapsed)
 		EZGuard.RefreshPlayersTransientState()
 	end
 
-	if GetNumGroupmates() > 0 then
-		EZGuard.SelectHurtPlayer()
-	else
-		EZGuard.ClearNewGuardTarget()
-	end
+	EZGuard.SelectHurtPlayer()
 
 	EZGuard.UpdateButtonGlow()
 	EZGuard.AutoTarget()
 end
 
 function EZGuard.RefreshGuardHotbarSlot()
-	local abilityId = GuardAbilityID[GameData.Player.career.line]
+	local abilityId = getGuardAbilityId()
 	EZGuard.GuardButtonState.hotbarSlot = nil
 	hasGuard = false
 
@@ -680,44 +670,12 @@ function EZGuard.RefreshGuardHotbarSlot()
 	end
 end
 
-function EZGuard.CheckGuard(slot, actionType, actionId)
-	if actionId == GuardAbilityID[GameData.Player.career.line] then
-		hasGuard = true
-		if slot then
-			EZGuard.GuardButtonState.hotbarSlot = slot
-		end
-	end
-end
-
-function EZGuard.Slash(input)
-	input = string.lower(input)
-	if input == "" then
-		EZGuard.Settings.enabled = not EZGuard.Settings.enabled
-	elseif tonumber(input) then
-		EZGuard.Settings.guardDistance = tonumber(input)
-		EZGuard.Settings.enabled = true
-	end
-	if EZGuard.Settings.enabled then
-		EZGuard.Enable()
-	else
-		EZGuard.Disable()
-	end
-end
-
 function EZGuard.Print(message)
 	local line = getChatPrefixWString(true) .. toWString(message)
 	if EA_ChatWindow and type(EA_ChatWindow.Print) == "function" then
 		EA_ChatWindow.Print(line, SystemData.SystemLogFilters.GENERAL)
 	elseif type(TextLogAddEntry) == "function" then
 		TextLogAddEntry("System", SystemData.SystemLogFilters.GENERAL, line)
-	end
-end
-
-function EZGuard.PrintSettings()
-	if EZGuard.Settings.enabled then
-		EZGuard.Print(L"--- <icon57> Enabled")
-	else
-		EZGuard.Print(L"--- <icon58> Disabled")
 	end
 end
 
@@ -815,7 +773,6 @@ function EZGuard.AutoTarget()
 		then
 			EZGuard.AutoTargetState.lastBroadcastName = L""
 			EZGuard.AutoTargetState.pendingName = L""
-			EZGuard.AutoTargetState.pendingIndex = 0
 		end
 		return
 	end
@@ -834,10 +791,15 @@ function EZGuard.TryAutoTarget(player)
 		return
 	end
 
+	if EZGuard.AutoTargetState.pendingName == player.name
+		and currentTime < EZGuard.AutoTargetState.nextAllowedTime
+	then
+		return
+	end
+
 	BroadcastEvent(targetEvent)
 	EZGuard.AutoTargetState.lastBroadcastName = player.name
 	EZGuard.AutoTargetState.pendingName = player.name
-	EZGuard.AutoTargetState.pendingIndex = player.partyIndex or player.index or 0
 	EZGuard.AutoTargetState.nextAllowedTime = currentTime + PARTY_AUTO_TARGET_THROTTLE
 end
 
@@ -872,7 +834,7 @@ function EZGuard.IsGuardingTarget(targetType)
 		return false
 	end
 
-	local guardAbilityId = GuardAbilityID[GameData.Player.career.line]
+	local guardAbilityId = getGuardAbilityId()
 	if not guardAbilityId then
 		return false
 	end
@@ -891,7 +853,7 @@ function EZGuard.GetFriendlyTarget()
 	if target and not target.isNPC and target.name ~= L"" then
 		return fixString(target.name), clampHealthPercent(target.healthPercent)
 	elseif target and target.entityid == 0 then
-		return fixString(LOCAL_PLAYER_NAME), clampHealthPercent(GameData.Player.hitPoints.current)
+		return fixString(LOCAL_PLAYER_NAME), getLocalPlayerHealthPercent()
 	end
 	return L"", 0
 end
@@ -902,48 +864,63 @@ function EZGuard.BuildFriendlyPlayersSnapshot()
 	local ownPartyTargetEvents, ownPartySlotByName = getOwnPartyTargetEvents()
 
 	EZGuard.OwnPartyTargetEvents = ownPartyTargetEvents
-	EZGuard.Player.name = fixString(LOCAL_PLAYER_NAME)
 
+	local usedScenarioRoster = false
 	if (GameData.Player.isInScenario or GameData.Player.isInSiege) and GameData.GetScenarioPlayerGroups then
 		local scenarioPlayers = GameData.GetScenarioPlayerGroups() or {}
+		local playerRealm = GameData.Player.realm
 		for _, playerData in ipairs(scenarioPlayers) do
-			local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or nil
-			local playerName = fixString(playerData.name)
-			local partyIndex = ownPartySlotByName[playerName]
-			pushPlayer(
-				playersByName,
-				ownPartyTargetEvents,
-				playerData.name,
-				playerData.health,
-				careerLine,
-				partyIndex
-			)
+			if playerData and playerData.name and playerData.name ~= L"" then
+				if playerData.realm == nil or playerRealm == nil or playerData.realm == playerRealm then
+					local health = playerData.health
+					if health == nil then
+						health = playerData.healthPercent
+					end
+					if health ~= nil then
+						local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or playerData.careerLine
+						local playerName = fixString(playerData.name)
+						pushPlayer(
+							playersByName,
+							ownPartyTargetEvents,
+							playerData.name,
+							health,
+							careerLine,
+							ownPartySlotByName[playerName]
+						)
+						usedScenarioRoster = true
+					end
+				end
+			end
 		end
-	elseif IsWarBandActive and IsWarBandActive() then
-		local warbandData = PartyUtils.GetWarbandData() or {}
-		for _, groupData in ipairs(warbandData) do
-			for partyIndex, playerData in ipairs(groupData.players or {}) do
+	end
+
+	if not usedScenarioRoster then
+		if IsWarBandActive and IsWarBandActive() then
+			local warbandData = PartyUtils.GetWarbandData() or {}
+			for _, groupData in ipairs(warbandData) do
+				for partyIndex, playerData in ipairs(groupData.players or {}) do
+					pushPlayer(
+						playersByName,
+						ownPartyTargetEvents,
+						playerData.name,
+						playerData.healthPercent,
+						playerData.careerLine,
+						ownPartyTargetEvents[fixString(playerData.name)] and partyIndex or nil
+					)
+				end
+			end
+		else
+			local partyData = PartyUtils.GetPartyData() or {}
+			for index, playerData in ipairs(partyData) do
 				pushPlayer(
 					playersByName,
 					ownPartyTargetEvents,
 					playerData.name,
 					playerData.healthPercent,
 					playerData.careerLine,
-					ownPartyTargetEvents[fixString(playerData.name)] and partyIndex or nil
+					index
 				)
 			end
-		end
-	else
-		local partyData = PartyUtils.GetPartyData() or {}
-		for index, playerData in ipairs(partyData) do
-			pushPlayer(
-				playersByName,
-				ownPartyTargetEvents,
-				playerData.name,
-				playerData.healthPercent,
-				playerData.careerLine,
-				index
-			)
 		end
 	end
 
@@ -1024,7 +1001,6 @@ function EZGuard.RefreshPlayersTransientState()
 	end
 
 	players = EZGuard.SetPlayersDistance(players)
-	sortTrackedPlayers(players)
 	EZGuard.Party = players
 	EZGuard.RefreshState.transientDirty = false
 	EZGuard.RefreshState.nextTransientRefreshTime = currentTime + TRANSIENT_REFRESH_INTERVAL
@@ -1032,7 +1008,7 @@ function EZGuard.RefreshPlayersTransientState()
 end
 
 function EZGuard.SelectHurtPlayer()
-	local players = EZGuard.Party
+	local players = EZGuard.Party or {}
 	local cmpPlayer = {
 		index = 0,
 		name = L"",
@@ -1083,7 +1059,7 @@ function installActionButtonHooks()
 
 	orgActionButtonOnLButtonDown = ActionButton.OnLButtonDown
 	function ActionButton.OnLButtonDown(self, flags, x, y)
-		local guardAbilityId = GuardAbilityID[GameData.Player.career.line]
+		local guardAbilityId = getGuardAbilityId()
 		if EZGuard.Settings
 			and EZGuard.Settings.enabled
 			and flags == SystemData.ButtonFlags.GAME_ACTION
@@ -1103,14 +1079,14 @@ function installActionButtonHooks()
 
 	orgActionButtonUpdateBurning = ActionButton.UpdateBurning
 	function ActionButton.UpdateBurning(self, previousResource, currentResource)
-		if self.m_ActionId ~= GuardAbilityID[GameData.Player.career.line] then
+		if self.m_ActionId ~= getGuardAbilityId() then
 			orgActionButtonUpdateBurning(self, previousResource, currentResource)
 		end
 	end
 
 	orgActionButtonUpdateInventory = ActionButton.UpdateInventory
 	function ActionButton.UpdateInventory(self)
-		if self.m_ActionId == GuardAbilityID[GameData.Player.career.line] then
+		if self.m_ActionId == getGuardAbilityId() then
 			EZGuard.RefreshGuardButtonAppearance()
 		else
 			orgActionButtonUpdateInventory(self)

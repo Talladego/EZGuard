@@ -80,9 +80,7 @@ end
 function EZGuard_Config.SettingsChanged()
 	GUI:Hide()
 	EZGuard.Settings = EZGuard.Settings or {}
-	if EZGuard.NormalizeSettings then
-		EZGuard.NormalizeSettings(EZGuard.Settings)
-	end
+	EZGuard.NormalizeSettings(EZGuard.Settings)
 	if EZGuard.RefreshState then
 		EZGuard.RefreshState.playersDirty = true
 		EZGuard.RefreshState.transientDirty = true
@@ -91,11 +89,5 @@ function EZGuard_Config.SettingsChanged()
 		EZGuard.RefreshState.nextTransientRefreshTime = 0
 		EZGuard.RefreshState.nextTargetRefreshTime = 0
 	end
-	if EZGuard.ApplyEnabledState then
-		EZGuard.ApplyEnabledState()
-	elseif EZGuard.Settings.enabled then
-		EZGuard.Enable()
-	else
-		EZGuard.Disable()
-	end
+	EZGuard.ApplyEnabledState()
 end

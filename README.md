@@ -18,6 +18,14 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.26
+
+- Scenario/siege: fall through to warband/party when the scenario roster is empty; same-realm filter; `health` or `healthPercent`
+- Self-target HP uses current/max percent (not raw hit points)
+- Guard candidate selection uses the roster snapshot (not `GetNumGroupmates`)
+- Auto-target throttle is actually applied; unused slash/hotbar leftovers removed
+- ActionButton hooks install on addon init as well as `LOADING_END`
+
 ## Version 1.25
 
 - Scenario/siege: map own-party slot into `pushPlayer` so `NewGuardTarget.index` is set when possible

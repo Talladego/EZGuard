@@ -14,7 +14,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $DestParent = Split-Path -Parent $Dest
 $ModSrc = Join-Path $RepoRoot "EZGuard.mod"
 
@@ -27,6 +27,15 @@ $RootFiles = @(
 $RuntimeDirs = @(
     "libs"
 )
+
+function Test-IsReparsePoint {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+    $item = Get-Item -LiteralPath $Path -Force
+    return [bool]($item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+}
 
 if (-not (Test-Path -LiteralPath $ModSrc)) {
     throw "EZGuard.mod missing under $RepoRoot - refuse to deploy"
@@ -50,6 +59,20 @@ $destLeaf = Split-Path -Leaf $Dest
 if ($destLeaf -ne "EZGuard") {
     throw "Dest must be an EZGuard folder (leaf name EZGuard), got: $destLeaf ($Dest)"
 }
+$parentLeaf = Split-Path -Leaf $DestParent
+if ($parentLeaf -ne "AddOns") {
+    throw "Dest parent must be an AddOns folder, got: $parentLeaf ($DestParent)"
+}
+
+$resolvedRepo = [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')
+$resolvedDest = [IO.Path]::GetFullPath($Dest).TrimEnd('\')
+$repoPrefix = $resolvedRepo + [IO.Path]::DirectorySeparatorChar
+if ($resolvedDest -ieq $resolvedRepo -or $resolvedDest.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Dest must not be the git clone or a path inside it: $resolvedDest"
+}
+if (Test-IsReparsePoint -Path $Dest) {
+    throw "Dest is a junction/symlink; refuse to deploy: $Dest"
+}
 
 Write-Host "Repo:   $RepoRoot"
 Write-Host "Dest:   $Dest"
@@ -67,12 +90,14 @@ function Invoke-RobocopyMirror {
         [Parameter(Mandatory = $true)][string]$Destination
     )
 
+    if (Test-IsReparsePoint -Path $Destination) {
+        throw "Runtime folder is a junction/symlink; refuse to mirror: $Destination"
+    }
+
     $robocopyArgs = @(
         $Source,
         $Destination,
         "/MIR",
-        "/XF", "*.bak", "*.tmp", "*.log", "Thumbs.db", ".DS_Store", "Desktop.ini",
-        "/XD", "__pycache__",
         "/R:2", "/W:1",
         "/NFL", "/NDL", "/NP", "/NJH"
     )
@@ -105,7 +130,11 @@ foreach ($dir in $RuntimeDirs) { $allowed[$dir] = $true }
 Get-ChildItem -LiteralPath $Dest -Force | ForEach-Object {
     if ($allowed.ContainsKey($_.Name)) { return }
     Write-Host "Prune: $($_.FullName)"
-    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    if ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        Remove-Item -LiteralPath $_.FullName -Force
+    } else {
+        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+    }
 }
 
 $destMod = Join-Path $Dest "EZGuard.mod"

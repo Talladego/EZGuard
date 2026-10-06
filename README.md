@@ -4,8 +4,11 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 
 ## Commands
 
-- `/ezguard` or `/ezg` - open settings
-- Ctrl-click guard ability - toggle enabled/disabled
+- `/ezguard` or `/ezg` — open settings
+- `/ezg toggle` — enable or disable
+- `/ezg on` / `/ezg off` — set enabled state
+- `/ezg <feet>` — set guard distance (example: `/ezg 50`)
+- Ctrl-click guard ability — toggle enabled/disabled
 
 ## Settings
 
@@ -17,6 +20,15 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Range Check | Use overhead map distance lookup (disable to skip map scan) |
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
+
+## Version 1.27
+
+- Equal HP×weight ties pick the closer player
+- Skip untargetable warband/scenario candidates so a party member can still be selected
+- Guard-button glow/overlay only updates when the applied state changes
+- Map distance scan only looks up targetable names
+- Slash: `toggle` / `on` / `off` / numeric distance
+- Deploy script refuses the git clone, non-AddOns parents, and junction/symlink destinations
 
 ## Version 1.26
 

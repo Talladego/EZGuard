@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.26
+local VERSION = 1.27
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -29,6 +29,7 @@ local loadingEndEventRegistered = false
 local activeEventsRegistered = false
 local actionButtonHooksInstalled = false
 local slashCommandsRegistered = false
+local cachedSelfName = nil
 
 local mathFloor = math.floor
 local pairs = pairs
@@ -132,6 +133,13 @@ local function fixString(str)
 		str = str:sub(1, pos - 1)
 	end
 	return str
+end
+
+local function getSelfName()
+	if cachedSelfName == nil then
+		cachedSelfName = fixString(LOCAL_PLAYER_NAME)
+	end
+	return cachedSelfName
 end
 
 local function toWString(value)
@@ -287,7 +295,7 @@ end
 local function getOwnPartyTargetEvents()
 	local ownPartyTargetEvents = {}
 	local ownPartySlotByName = {}
-	local selfName = fixString(LOCAL_PLAYER_NAME)
+	local selfName = getSelfName()
 
 	if IsWarBandActive and IsWarBandActive() then
 		local partyIndex = PartyUtils.IsPlayerInWarband(selfName)
@@ -454,6 +462,9 @@ EZGuard.GuardButtonState = {
 	hotbarSlot = nil,
 	glowLevel = 0,
 	buttonActive = false,
+	appliedGlowLevel = nil,
+	appliedOverlayEnabled = nil,
+	appliedButton = nil,
 }
 EZGuard.CurrentFriendlyTarget = {
 	name = L"",
@@ -494,6 +505,9 @@ local function resetRuntimeState()
 	EZGuard.AutoTargetState.lastBroadcastName = L""
 	EZGuard.AutoTargetState.nextAllowedTime = 0
 	EZGuard.GuardButtonState.glowLevel = 0
+	EZGuard.GuardButtonState.appliedGlowLevel = nil
+	EZGuard.GuardButtonState.appliedOverlayEnabled = nil
+	EZGuard.GuardButtonState.appliedButton = nil
 	markAllDirty()
 	timeLeft = 0
 	EZGuard.RefreshGuardButtonAppearance()
@@ -557,6 +571,7 @@ end
 
 function EZGuard.LOADING_END()
 	LOCAL_PLAYER_NAME = GameData.Player.name
+	cachedSelfName = fixString(LOCAL_PLAYER_NAME)
 	isTank = checkIsTank()
 	registerSlashCommands()
 	if isTank then
@@ -624,10 +639,6 @@ function EZGuard.OnUpdate(elapsed)
 		return
 	end
 
-	if hasGuard then
-		EZGuard.RefreshGuardButtonAppearance()
-	end
-
 	if EZGuard.RefreshState.targetDirty or currentTime >= EZGuard.RefreshState.nextTargetRefreshTime then
 		refreshGuardTargetState()
 	end
@@ -654,6 +665,9 @@ end
 function EZGuard.RefreshGuardHotbarSlot()
 	local abilityId = getGuardAbilityId()
 	EZGuard.GuardButtonState.hotbarSlot = nil
+	EZGuard.GuardButtonState.appliedGlowLevel = nil
+	EZGuard.GuardButtonState.appliedOverlayEnabled = nil
+	EZGuard.GuardButtonState.appliedButton = nil
 	hasGuard = false
 
 	if not abilityId then
@@ -716,25 +730,6 @@ function EZGuard.Disable()
 	end
 end
 
-function EZGuard.ClearNewGuardTarget()
-	if EZGuard.NewGuardTarget.name == L""
-		and EZGuard.NewGuardTarget.index == 0
-		and EZGuard.NewGuardTarget.targetEvent == nil
-		and EZGuard.AutoTargetState.lastBroadcastName == L""
-	then
-		return
-	end
-
-	EZGuard.NewGuardTarget.index = 0
-	EZGuard.NewGuardTarget.name = L""
-	EZGuard.NewGuardTarget.healthPercent = 0
-	EZGuard.NewGuardTarget.distance = 999999
-	EZGuard.NewGuardTarget.weight = 1000
-	EZGuard.NewGuardTarget.targetEvent = nil
-	EZGuard.NewGuardTarget.partyIndex = 0
-	EZGuard.AutoTargetState.lastBroadcastName = L""
-end
-
 function EZGuard.UpdateButtonGlow()
 	local shouldGlow = EZGuard.Settings.burnEffects
 		and EZGuard.NewGuardTarget.name ~= L""
@@ -753,13 +748,27 @@ end
 function EZGuard.RefreshGuardButtonAppearance()
 	local button = getGuardButton()
 	if not button then
+		EZGuard.GuardButtonState.appliedButton = nil
+		EZGuard.GuardButtonState.appliedGlowLevel = nil
+		EZGuard.GuardButtonState.appliedOverlayEnabled = nil
 		return
 	end
 
 	local settingsEnabled = EZGuard.Settings and EZGuard.Settings.enabled
+	local glowLevel = settingsEnabled and EZGuard.GuardButtonState.glowLevel or 0
+	if EZGuard.GuardButtonState.appliedButton == button
+		and EZGuard.GuardButtonState.appliedOverlayEnabled == settingsEnabled
+		and EZGuard.GuardButtonState.appliedGlowLevel == glowLevel
+	then
+		return
+	end
+
 	setGuardButtonActiveOverlay(button, settingsEnabled)
-	setGuardButtonGlow(button, settingsEnabled and EZGuard.GuardButtonState.glowLevel or 0)
+	setGuardButtonGlow(button, glowLevel)
 	EZGuard.GuardButtonState.buttonActive = settingsEnabled
+	EZGuard.GuardButtonState.appliedOverlayEnabled = settingsEnabled
+	EZGuard.GuardButtonState.appliedGlowLevel = glowLevel
+	EZGuard.GuardButtonState.appliedButton = button
 end
 
 function EZGuard.AutoTarget()
@@ -812,7 +821,7 @@ end
 function refreshGuardTargetState()
 	if EZGuard.IsGuardingTarget(GameData.BuffTargetType.SELF) then
 		if EZGuard.IsGuardingTarget(GameData.BuffTargetType.TARGET_FRIENDLY)
-			and EZGuard.CurrentFriendlyTarget.name ~= fixString(LOCAL_PLAYER_NAME)
+			and EZGuard.CurrentFriendlyTarget.name ~= getSelfName()
 			and EZGuard.CurrentFriendlyTarget.name ~= L""
 		then
 			EZGuard.CurrentGuardTarget.name = EZGuard.CurrentFriendlyTarget.name
@@ -957,7 +966,7 @@ function EZGuard.SetPlayersDistance(players)
 	local pendingCount = 0
 	for i = 1, #players do
 		local name = players[i].name
-		if name ~= nil and name ~= L"" and pending[name] == nil then
+		if name ~= nil and name ~= L"" and pending[name] == nil and resolveTargetEvent(players[i]) then
 			pending[name] = true
 			pendingCount = pendingCount + 1
 		end
@@ -1009,6 +1018,7 @@ end
 
 function EZGuard.SelectHurtPlayer()
 	local players = EZGuard.Party or {}
+	local selfName = getSelfName()
 	local cmpPlayer = {
 		index = 0,
 		name = L"",
@@ -1029,12 +1039,17 @@ function EZGuard.SelectHurtPlayer()
 
 	for i = 1, #players do
 		local player = players[i]
-		if player.name ~= fixString(LOCAL_PLAYER_NAME)
+		local targetEvent = resolveTargetEvent(player)
+		if player.name ~= selfName
+			and targetEvent
 			and player.health > 0
 			and player.distance <= EZGuard.Settings.guardDistance
-			and player.health * player.weight < cmpPlayer.health * cmpPlayer.weight
 		then
-			cmpPlayer = player
+			local score = player.health * player.weight
+			local cmpScore = cmpPlayer.health * cmpPlayer.weight
+			if score < cmpScore or (score == cmpScore and player.distance < cmpPlayer.distance) then
+				cmpPlayer = player
+			end
 		end
 	end
 

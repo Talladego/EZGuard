@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.28
+local VERSION = 1.29
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -950,18 +950,20 @@ function EZGuard.BuildFriendlyPlayersSnapshot()
 
 	if not usedScenarioRoster then
 		if IsWarBandActive and IsWarBandActive() then
-			local warbandData = PartyUtils.GetWarbandData() or {}
-			for _, groupData in ipairs(warbandData) do
-				for partyIndex, playerData in ipairs(groupData.players or {}) do
-					pushPlayer(
-						playersByName,
-						ownPartyTargetEvents,
-						playerData.name,
-						playerData.healthPercent,
-						playerData.careerLine,
-						ownPartyTargetEvents[fixString(playerData.name)] and partyIndex or nil
-					)
-				end
+			-- Own warband party only (same filter as scenario / SelectHurtPlayer).
+			local selfName = getSelfName()
+			local partyIndex = PartyUtils.IsPlayerInWarband and PartyUtils.IsPlayerInWarband(selfName)
+			local warbandParty = partyIndex and PartyUtils.GetWarbandParty and PartyUtils.GetWarbandParty(partyIndex)
+			local partyData = (warbandParty and warbandParty.players) or {}
+			for index, playerData in ipairs(partyData) do
+				pushPlayer(
+					playersByName,
+					ownPartyTargetEvents,
+					playerData.name,
+					playerData.healthPercent,
+					playerData.careerLine,
+					index
+				)
 			end
 		else
 			local partyData = PartyUtils.GetPartyData() or {}

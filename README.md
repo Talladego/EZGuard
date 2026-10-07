@@ -21,6 +21,10 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.29
+
+- Warband snapshot only builds own-party members (same filter as scenario)
+
 ## Version 1.28
 
 - Re-apply guard button glow/check after hotbar slot changes (#19); clear the old button

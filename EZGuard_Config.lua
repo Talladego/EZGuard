@@ -30,10 +30,23 @@ function EZGuard_Config.Slash(input)
 		return
 	end
 	local distance = tonumber(text)
-	if distance then
+	if distance ~= nil then
+		if distance <= 0 or distance ~= distance then
+			EZGuard.Print(L"Guard distance must be greater than 0.")
+			return
+		end
 		EZGuard.Settings.guardDistance = distance
 		EZGuard.NormalizeSettings(EZGuard.Settings)
-		EZGuard.Print(L"Guard distance: " .. towstring(tostring(EZGuard.Settings.guardDistance)))
+		if GUI then
+			GUI:Hide()
+			GUI = nil
+		end
+		local applied = EZGuard.Settings.guardDistance
+		if applied ~= distance then
+			EZGuard.Print(L"Guard distance clamped to " .. towstring(tostring(applied)))
+		else
+			EZGuard.Print(L"Guard distance: " .. towstring(tostring(applied)))
+		end
 		return
 	end
 

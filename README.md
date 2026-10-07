@@ -21,6 +21,15 @@ Tank helper for Return of Reckoning. Picks a hurt party member in guard range an
 | Guard Distance | Max range in feet (default 50) |
 | Hitpoint factors | Lower weight = higher priority when HP is equal |
 
+## Version 1.28
+
+- Re-apply guard button glow/check after hotbar slot changes (#19); clear the old button
+- Keep `PLAYER_HOT_BAR_UPDATED` registered for tanks even when disabled
+- Clamp guard distance to 1–150; reject `/ezg 0` and rebuild open settings after slash distance
+- Scenario snapshot only keeps own-party members
+- Unknown careers use DPS weight; selection no longer uses a fixed score seed
+- Deploy: resolve `-Dest` via the PowerShell path API; refuse a repo nested under Dest; delete junction prune children without following them
+
 ## Version 1.27
 
 - Equal HP×weight ties pick the closer player

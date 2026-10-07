@@ -15,6 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$Dest = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dest)
 $DestParent = Split-Path -Parent $Dest
 $ModSrc = Join-Path $RepoRoot "EZGuard.mod"
 
@@ -67,8 +68,13 @@ if ($parentLeaf -ne "AddOns") {
 $resolvedRepo = [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')
 $resolvedDest = [IO.Path]::GetFullPath($Dest).TrimEnd('\')
 $repoPrefix = $resolvedRepo + [IO.Path]::DirectorySeparatorChar
-if ($resolvedDest -ieq $resolvedRepo -or $resolvedDest.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Dest must not be the git clone or a path inside it: $resolvedDest"
+$destPrefix = $resolvedDest + [IO.Path]::DirectorySeparatorChar
+if (
+    $resolvedDest -ieq $resolvedRepo -or
+    $resolvedDest.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+    $resolvedRepo.StartsWith($destPrefix, [StringComparison]::OrdinalIgnoreCase)
+) {
+    throw "Dest must not overlap the git clone: dest=$resolvedDest repo=$resolvedRepo"
 }
 if (Test-IsReparsePoint -Path $Dest) {
     throw "Dest is a junction/symlink; refuse to deploy: $Dest"
@@ -131,7 +137,8 @@ Get-ChildItem -LiteralPath $Dest -Force | ForEach-Object {
     if ($allowed.ContainsKey($_.Name)) { return }
     Write-Host "Prune: $($_.FullName)"
     if ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        Remove-Item -LiteralPath $_.FullName -Force
+        # DirectoryInfo/FileInfo.Delete removes the link itself on Windows PowerShell 5.1.
+        $_.Delete()
     } else {
         Remove-Item -LiteralPath $_.FullName -Recurse -Force
     }

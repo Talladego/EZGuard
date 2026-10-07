@@ -6,7 +6,7 @@
 -- Local variables
 ----------------------------------------------------------------
 
-local VERSION = 1.27
+local VERSION = 1.28
 local TIME_DELAY = 0.5
 local MAX_MAP_POINTS = 511
 local DISTANCE_FIX_COEFFICIENT = 1 / 1.06
@@ -14,6 +14,8 @@ local SNAPSHOT_FALLBACK_INTERVAL = 2
 local TRANSIENT_REFRESH_INTERVAL = TIME_DELAY
 local TARGET_REFRESH_INTERVAL = TIME_DELAY
 local PARTY_AUTO_TARGET_THROTTLE = 0.25
+local DEFAULT_GUARD_DISTANCE = 50
+local MAX_GUARD_DISTANCE = 150
 local EZGUARD_CHAT_PREFIX_TEXT = "EZGuard"
 local EZGUARD_CHAT_PREFIX_COLOR = { 0, 255, 255 }
 local HEALER = "HEALER"
@@ -27,6 +29,7 @@ local isTank = false
 local hasGuard = false
 local loadingEndEventRegistered = false
 local activeEventsRegistered = false
+local hotbarEventRegistered = false
 local actionButtonHooksInstalled = false
 local slashCommandsRegistered = false
 local cachedSelfName = nil
@@ -192,8 +195,19 @@ end
 
 local function clampPositiveNumber(value, fallback)
 	value = tonumber(value)
-	if value == nil or value <= 0 then
+	if value == nil or value <= 0 or value ~= value then
 		return fallback
+	end
+	return value
+end
+
+local function clampGuardDistance(value, fallback)
+	value = tonumber(value)
+	if value == nil or value <= 0 or value ~= value then
+		return fallback
+	end
+	if value > MAX_GUARD_DISTANCE then
+		return MAX_GUARD_DISTANCE
 	end
 	return value
 end
@@ -226,7 +240,7 @@ end
 
 local function normalizeSettings(settings)
 	settings = settings or {}
-	settings.guardDistance = clampPositiveNumber(settings.guardDistance, 50)
+	settings.guardDistance = clampGuardDistance(settings.guardDistance, DEFAULT_GUARD_DISTANCE)
 	settings.healerWeight = clampPositiveNumber(settings.healerWeight, 100)
 	settings.dpsWeight = clampPositiveNumber(settings.dpsWeight, 125)
 	settings.tankWeight = clampPositiveNumber(settings.tankWeight, 150)
@@ -289,7 +303,7 @@ local function getArchetypeWeight(careerLine)
 	elseif ArcheType[careerLine] == TANK then
 		return EZGuard.Settings.tankWeight
 	end
-	return 999999
+	return EZGuard.Settings.dpsWeight
 end
 
 local function getOwnPartyTargetEvents()
@@ -420,6 +434,17 @@ local function setGuardButtonActiveOverlay(button, enabled)
 	end
 end
 
+local function clearGuardButtonAppearance(button)
+	if not button then
+		return
+	end
+	setGuardButtonGlow(button, 0)
+	if button.m_Windows and button.m_Windows[7] then
+		button.m_Windows[7]:SetText("")
+		button.m_Windows[7]:Show(false)
+	end
+end
+
 ----------------------------------------------------------------
 -- EZGuard
 ----------------------------------------------------------------
@@ -433,7 +458,7 @@ end
 EZGuard.DefaultSettings = {
 	version = VERSION,
 	enabled = true,
-	guardDistance = 50,
+	guardDistance = DEFAULT_GUARD_DISTANCE,
 	burnEffects = true,
 	healerWeight = 100,
 	dpsWeight = 125,
@@ -526,9 +551,20 @@ function EZGuard.Initialize()
 	EZGuard.LOADING_END()
 end
 
+local function setHotbarEventRegistered(shouldRegister)
+	if shouldRegister and not hotbarEventRegistered then
+		RegisterEventHandler(SystemData.Events.PLAYER_HOT_BAR_UPDATED, "EZGuard.PLAYER_HOT_BAR_UPDATED")
+		hotbarEventRegistered = true
+	elseif hotbarEventRegistered and not shouldRegister then
+		UnregisterEventHandler(SystemData.Events.PLAYER_HOT_BAR_UPDATED, "EZGuard.PLAYER_HOT_BAR_UPDATED")
+		hotbarEventRegistered = false
+	end
+end
+
 function EZGuard.OnShutdown()
 	uninstallActionButtonHooks()
 	EZGuard.RegisterEventHandlers(false)
+	setHotbarEventRegistered(false)
 	if loadingEndEventRegistered then
 		UnregisterEventHandler(SystemData.Events.LOADING_END, "EZGuard.LOADING_END")
 		loadingEndEventRegistered = false
@@ -549,7 +585,6 @@ function EZGuard.RegisterEventHandlers(enabled)
 		RegisterEventHandler(SystemData.Events.SCENARIO_PLAYER_HITS_UPDATED, "EZGuard.GROUP_UPDATED")
 		RegisterEventHandler(SystemData.Events.BATTLEGROUP_UPDATED, "EZGuard.GROUP_UPDATED")
 		RegisterEventHandler(SystemData.Events.BATTLEGROUP_MEMBER_UPDATED, "EZGuard.GROUP_UPDATED")
-		RegisterEventHandler(SystemData.Events.PLAYER_HOT_BAR_UPDATED, "EZGuard.PLAYER_HOT_BAR_UPDATED")
 		activeEventsRegistered = true
 		markAllDirty()
 	elseif activeEventsRegistered and not shouldRegister then
@@ -563,7 +598,6 @@ function EZGuard.RegisterEventHandlers(enabled)
 		UnregisterEventHandler(SystemData.Events.SCENARIO_PLAYER_HITS_UPDATED, "EZGuard.GROUP_UPDATED")
 		UnregisterEventHandler(SystemData.Events.BATTLEGROUP_UPDATED, "EZGuard.GROUP_UPDATED")
 		UnregisterEventHandler(SystemData.Events.BATTLEGROUP_MEMBER_UPDATED, "EZGuard.GROUP_UPDATED")
-		UnregisterEventHandler(SystemData.Events.PLAYER_HOT_BAR_UPDATED, "EZGuard.PLAYER_HOT_BAR_UPDATED")
 		activeEventsRegistered = false
 		resetRuntimeState()
 	end
@@ -576,16 +610,17 @@ function EZGuard.LOADING_END()
 	registerSlashCommands()
 	if isTank then
 		installActionButtonHooks()
-		EZGuard.RefreshGuardHotbarSlot()
+		setHotbarEventRegistered(true)
 		EZGuard.RegisterEventHandlers(EZGuard.Settings.enabled)
 		if isAddonActive() then
 			markAllDirty()
 		else
 			resetRuntimeState()
 		end
-		EZGuard.RefreshGuardButtonAppearance()
+		EZGuard.RefreshGuardHotbarSlot()
 	else
 		uninstallActionButtonHooks()
+		setHotbarEventRegistered(false)
 		EZGuard.RegisterEventHandlers(false)
 	end
 end
@@ -664,24 +699,31 @@ end
 
 function EZGuard.RefreshGuardHotbarSlot()
 	local abilityId = getGuardAbilityId()
-	EZGuard.GuardButtonState.hotbarSlot = nil
+	local previousSlot = EZGuard.GuardButtonState.hotbarSlot
+	local previousButton = getGuardButton()
+	local newSlot = nil
+
+	if abilityId then
+		for slot = 1, 60 do
+			local _, actionId = GetHotbarData(slot)
+			if actionId == abilityId then
+				newSlot = slot
+				break
+			end
+		end
+	end
+
+	EZGuard.GuardButtonState.hotbarSlot = newSlot
+	hasGuard = newSlot ~= nil
 	EZGuard.GuardButtonState.appliedGlowLevel = nil
 	EZGuard.GuardButtonState.appliedOverlayEnabled = nil
 	EZGuard.GuardButtonState.appliedButton = nil
-	hasGuard = false
 
-	if not abilityId then
-		return
+	if previousButton and previousSlot ~= newSlot then
+		clearGuardButtonAppearance(previousButton)
 	end
 
-	for slot = 1, 60 do
-		local _, actionId = GetHotbarData(slot)
-		if actionId == abilityId then
-			EZGuard.GuardButtonState.hotbarSlot = slot
-			hasGuard = true
-			return
-		end
-	end
+	EZGuard.RefreshGuardButtonAppearance()
 end
 
 function EZGuard.Print(message)
@@ -862,7 +904,7 @@ function EZGuard.GetFriendlyTarget()
 	if target and not target.isNPC and target.name ~= L"" then
 		return fixString(target.name), clampHealthPercent(target.healthPercent)
 	elseif target and target.entityid == 0 then
-		return fixString(LOCAL_PLAYER_NAME), getLocalPlayerHealthPercent()
+		return getSelfName(), getLocalPlayerHealthPercent()
 	end
 	return L"", 0
 end
@@ -881,22 +923,25 @@ function EZGuard.BuildFriendlyPlayersSnapshot()
 		for _, playerData in ipairs(scenarioPlayers) do
 			if playerData and playerData.name and playerData.name ~= L"" then
 				if playerData.realm == nil or playerRealm == nil or playerData.realm == playerRealm then
-					local health = playerData.health
-					if health == nil then
-						health = playerData.healthPercent
-					end
-					if health ~= nil then
-						local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or playerData.careerLine
-						local playerName = fixString(playerData.name)
-						pushPlayer(
-							playersByName,
-							ownPartyTargetEvents,
-							playerData.name,
-							health,
-							careerLine,
-							ownPartySlotByName[playerName]
-						)
-						usedScenarioRoster = true
+					local playerName = fixString(playerData.name)
+					local partyIndex = ownPartySlotByName[playerName]
+					if partyIndex then
+						local health = playerData.health
+						if health == nil then
+							health = playerData.healthPercent
+						end
+						if health ~= nil then
+							local careerLine = playerData.careerId and CareerIDsToLines[playerData.careerId] or playerData.careerLine
+							pushPlayer(
+								playersByName,
+								ownPartyTargetEvents,
+								playerData.name,
+								health,
+								careerLine,
+								partyIndex
+							)
+							usedScenarioRoster = true
+						end
 					end
 				end
 			end
@@ -1019,15 +1064,7 @@ end
 function EZGuard.SelectHurtPlayer()
 	local players = EZGuard.Party or {}
 	local selfName = getSelfName()
-	local cmpPlayer = {
-		index = 0,
-		name = L"",
-		health = 101,
-		distance = 999999,
-		weight = 1000,
-		targetEvent = nil,
-		partyIndex = 0,
-	}
+	local cmpPlayer = nil
 
 	EZGuard.NewGuardTarget.index = 0
 	EZGuard.NewGuardTarget.name = L""
@@ -1045,17 +1082,24 @@ function EZGuard.SelectHurtPlayer()
 			and player.health > 0
 			and player.distance <= EZGuard.Settings.guardDistance
 		then
-			local score = player.health * player.weight
-			local cmpScore = cmpPlayer.health * cmpPlayer.weight
-			if score < cmpScore or (score == cmpScore and player.distance < cmpPlayer.distance) then
+			if not cmpPlayer then
 				cmpPlayer = player
+			else
+				local score = player.health * player.weight
+				local cmpScore = cmpPlayer.health * cmpPlayer.weight
+				if score < cmpScore or (score == cmpScore and player.distance < cmpPlayer.distance) then
+					cmpPlayer = player
+				end
 			end
 		end
 	end
 
-	if (cmpPlayer.name ~= L"" and cmpPlayer.health < 100 and cmpPlayer.name ~= EZGuard.CurrentGuardTarget.name)
-		or (cmpPlayer.name ~= L"" and cmpPlayer.health == 100 and EZGuard.CurrentGuardTarget.name == L"")
-		or (cmpPlayer.name ~= L"" and cmpPlayer.health == 100 and EZGuard.CurrentGuardTarget.healthPercent == 0)
+	if cmpPlayer
+		and (
+			(cmpPlayer.health < 100 and cmpPlayer.name ~= EZGuard.CurrentGuardTarget.name)
+			or (cmpPlayer.health == 100 and EZGuard.CurrentGuardTarget.name == L"")
+			or (cmpPlayer.health == 100 and EZGuard.CurrentGuardTarget.healthPercent == 0)
+		)
 	then
 		EZGuard.NewGuardTarget.index = cmpPlayer.index or cmpPlayer.partyIndex or 0
 		EZGuard.NewGuardTarget.name = cmpPlayer.name
